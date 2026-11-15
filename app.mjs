@@ -1,6 +1,6 @@
 import {asciiDigits, parsePhone, parseUAEPhone} from './phone.mjs?v=3';
 import {extractFiles} from './import.mjs?v=2';
-import {mappingFields, mapTable, normalizeDOB, profileError, profileFields, profileValues} from './contact-fields.mjs?v=4';
+import {mappingFields, mapTable, normalizeDOB, profileError, profileFields, profileValues, parseTags, tagHeader, tagsError} from './contact-fields.mjs?v=6';
 
 const $ = id => document.getElementById(id);
 const display = new Intl.DisplayNames(['ar'], {type: 'region'});
@@ -15,6 +15,8 @@ let contactView = 'active';
 const selected = new Set();
 let bulkRequest;
 let bulkWorking = false;
+let whatsappWorking = false;
+let whatsappMessage = '';
 let pending = [];
 let mapping;
 let category = '';
@@ -113,6 +115,7 @@ function drawDashboard() {
             $('search').value = '';
             $('dob-filter').value = '';
             $('dob-ignore-year').checked = false;
+            $('whatsapp-filter').value = '';
             switchContactView('active');
             $('category-filter').value = label;
             clearSelection();
@@ -149,13 +152,36 @@ function filtered() {
     const digits = asciiDigits(query).replace(/[^\d]/g, '');
     const dob = $('dob-filter').value;
     const withoutYear = $('dob-ignore-year').checked;
+    const whatsapp = $('whatsapp-filter').value;
     return viewContacts().filter(row => (!query || row.name.toLocaleLowerCase().includes(query) ||
         (digits && !/\p{L}/u.test(query) && row.phone.includes(digits))) &&
         (!$('country-filter').value || row.country === $('country-filter').value) &&
         (!$('category-filter').value || row.categories.includes($('category-filter').value)) &&
         (!$('tag-filter').value || row.tags.includes($('tag-filter').value)) &&
+        (!whatsapp || (row.whatsapp_status || 'unknown') === whatsapp) &&
         (!dob || (withoutYear ? row.dob?.slice(5) === dob.slice(5) : row.dob === dob)));
 }
+function whatsappLabel(row) {
+    return row.whatsapp_status === 'yes' ? 'عليه واتساب' : row.whatsapp_status === 'no' ? 'ما عليه واتساب' : 'غير مفحوص';
+}
+
+function whatsappCell(row) {
+    const label = whatsappLabel(row);
+    if (row.whatsapp_status !== 'yes' || !/^\+[1-9]\d{1,14}$/.test(row.phone)) return label;
+    const link = document.createElement('a');
+    link.className = 'whatsapp-link';
+    link.href = 'https://wa.me/' + row.phone.slice(1) + (whatsappMessage ? '?text=' + encodeURIComponent(whatsappMessage) : '');
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.setAttribute('aria-label', 'فتح واتساب للرقم ' + row.phone);
+    link.title = 'فتح محادثة واتساب';
+    const icon = document.createElement('img');
+    icon.src = 'assets/whatsapp.svg';
+    icon.alt = '';
+    link.append(icon);
+    return link;
+}
+
 function drawContacts() {
     const rows = filtered();
     const total = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -168,6 +194,8 @@ function drawContacts() {
     $('next').disabled = page + 1 === total;
     $('export').disabled = !rows.length;
     $('export').hidden = trash;
+    $('whatsapp-check').hidden = trash;
+    $('whatsapp-check').disabled = !rows.length || whatsappWorking;
     $('add').hidden = trash;
     $('view-active').setAttribute('aria-pressed', String(!trash));
     $('view-trash').setAttribute('aria-pressed', String(trash));
@@ -184,7 +212,7 @@ function drawContacts() {
             else selected.delete(row.id);
             updateSelection(rows, visible);
         });
-        const tr = appendRow(table, [checkbox, row.name, row.nationality, row.emid, row.phone, row.email, row.dob, row.gender, countryName(row.country),
+        const tr = appendRow(table, [checkbox, row.name, row.nationality, row.emid, row.phone, trash ? whatsappLabel(row) : whatsappCell(row), row.email, row.dob, row.gender, countryName(row.country),
             row.categories.join('، '), row.tags.join('، '), trash ? '' : button('تعديل', () => openEditor(row))]);
         tr.cells[0].className = 'selection-cell';
         tr.cells[4].className = 'phone';
@@ -228,7 +256,7 @@ async function loadContacts() {
     let batch;
     let after = 0;
     do {
-        ({rows: batch} = await api('list', {after}));
+        ({rows: batch, whatsapp_message: whatsappMessage = ''} = await api('list', {after}));
         for (const row of batch) rows.push(row);
         if (batch.length) after = batch.at(-1).id;
     } while (batch.length === 1000);
@@ -247,7 +275,7 @@ function drawReview(renderRows = true) {
     for (const row of pending) {
         row.parsed = parseUAEPhone(row.raw);
         row.state = row.parsed.state;
-        row.detailsError = profileError({...profileValues(row), dob: ''});
+        row.detailsError = profileError({...profileValues(row), dob: ''}) || tagsError(row.tags || []);
         if (row.state === 'valid' && archived.has(row.parsed.phone)) row.state = 'archived';
         if (row.state === 'valid' && row.detailsError) row.state = 'details';
         if (row.state === 'valid') {
@@ -267,9 +295,10 @@ function drawReview(renderRows = true) {
     $('save').disabled = working || counts.valid + counts.duplicate === 0;
     const table = $('review-rows');
     if (!renderRows) {
-        for (const tr of table.rows) {
-            tr.cells[8].textContent = rowStatus(tr.pendingRow);
-            tr.cells[8].className = tr.pendingRow.state;
+        for (const tr of table.querySelectorAll('tr')) {
+            const status = tr.querySelector('[data-review-status]');
+            status.textContent = rowStatus(tr.pendingRow);
+            status.className = tr.pendingRow.state;
         }
         return;
     }
@@ -302,16 +331,27 @@ function drawReview(renderRows = true) {
             if (key === 'dob') input.addEventListener('blur', () => input.value = row[key]);
             return input;
         });
-        const status = rowStatus(row);
+        const tags = document.createElement('textarea');
+        tags.rows = 2;
+        tags.value = (row.tags || []).join('\n');
+        tags.setAttribute('aria-label', 'التاغات');
+        tags.disabled = working;
+        tags.addEventListener('input', () => {
+            row.tags = parseTags(tags.value.split(/\r?\n/));
+            drawReview(false);
+        });
+        const status = document.createElement('span');
+        status.dataset.reviewStatus = '';
+        status.textContent = rowStatus(row);
+        status.className = row.state;
         const remove = button('استبعاد', () => {
             pending = pending.filter(other => other !== row);
             drawReview();
         });
         remove.disabled = working;
-        const tr = appendRow(table, [button(row.source.label, () => openSource(row.source)), name, phone, ...fields, status, remove]);
+        const tr = appendRow(table, [button(row.source.label, () => openSource(row.source)), name, phone, ...fields, tags, status, remove]);
         tr.pendingRow = row;
         tr.cells[2].className = 'phone';
-        tr.cells[8].className = row.state;
     }
 }
 function rowStatus(row) {
@@ -354,7 +394,7 @@ async function enter() {
     await loadContacts();
 }
 options($('editor-country'), countries, 'اختيار الدولة', countryName);
-for (const id of ['search', 'country-filter', 'category-filter', 'tag-filter', 'dob-filter', 'dob-ignore-year']) {
+for (const id of ['search', 'country-filter', 'category-filter', 'tag-filter', 'dob-filter', 'dob-ignore-year', 'whatsapp-filter']) {
     bind(id, 'input', clearSelection);
 }
 bind('prev', 'click', () => { page--; drawContacts(); });
@@ -380,10 +420,39 @@ bind('logout', 'click', async () => {
     await api('logout', {});
     location.reload();
 });
+bind('whatsapp-check', 'click', async () => {
+    if (whatsappWorking || contactView !== 'active') return;
+    const ids = filtered().map(row => row.id);
+    if (!ids.length || !confirm(`فحص ${ids.length} رقم مطابق للفلاتر؟ سترسل VITA أرقام الهاتف فقط إلى Whapi.Cloud. لن تُرسل أي رسالة.`)) return;
+    whatsappWorking = true;
+    $('whatsapp-check').disabled = true;
+    let scanned = 0;
+    let checked = 0;
+    let unknown = 0;
+    let error = '';
+    try {
+        for (let i = 0; i < ids.length; i += 20) {
+            notice(`فحص واتساب · ${scanned} من ${ids.length}`);
+            const batch = ids.slice(i, i + 20);
+            const result = await api('whatsapp_check', {ids: batch});
+            checked += result.checked;
+            unknown += result.unknown;
+            scanned += batch.length;
+        }
+    } catch (failure) {
+        error = failure.message;
+    } finally {
+        whatsappWorking = false;
+        notice([`تم تأكيد حالة ${checked} رقم من أصل ${ids.length}.`,
+            unknown ? `تعذّر تحديد حالة ${unknown} رقم.` : '',
+            error].filter(Boolean).join('\n'));
+        await loadContacts();
+    }
+});
 bind('export', 'click', () => {
-    const rows = filtered().map(row => [row.name, row.nationality, row.emid, row.phone, row.email, row.dob || '', row.gender, countryName(row.country), row.categories.join('، '), row.tags.join('، ')]);
-    const sheet = XLSX.utils.aoa_to_sheet([['Name', 'Nationality', 'EMID', 'Mobile #', 'Email', 'DOB', 'Gender', 'Phone country', 'Categories', 'Tags'], ...rows]);
-    sheet['!cols'] = [26, 20, 24, 20, 32, 15, 16, 24, 35, 35].map(wch => ({wch}));
+    const rows = filtered().map(row => [row.name, row.nationality, row.emid, row.phone, whatsappLabel(row), row.email, row.dob || '', row.gender, countryName(row.country), row.categories.join('، '), row.tags.join('، ')]);
+    const sheet = XLSX.utils.aoa_to_sheet([['Name', 'Nationality', 'EMID', 'Mobile #', 'WhatsApp', 'Email', 'DOB', 'Gender', 'Phone country', 'Categories', 'Tags'], ...rows]);
+    sheet['!cols'] = [26, 20, 24, 20, 20, 32, 15, 16, 24, 35, 35].map(wch => ({wch}));
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, 'Contacts');
     XLSX.writeFile(book, 'VITA-Contacts.xlsx');
@@ -552,30 +621,60 @@ function drawMapping(sheets) {
         addControl('dates', 'ترتيب التاريخ النصّي', dates);
         const width = sheet.rows.reduce((max, row) => Math.max(max, row.length), 0);
         const columns = Array.from({length: width}, (_, i) => String(i));
+        const tagGroup = document.createElement('details');
+        const tagSummary = document.createElement('summary');
+        const tagOptions = document.createElement('div');
+        tagOptions.className = 'fields';
+        tagGroup.append(tagSummary, tagOptions);
+        const tagInputs = [];
+        const headingKey = value => String(value ?? '').replace(/[^\p{L}\p{N}]/gu, '');
+        function columnLabel(value) {
+            const i = Number(value);
+            const letter = XLSX.utils.encode_col(i);
+            const heading = header.checked ? String(sheet.rows[0]?.[i] ?? '').trim() : '';
+            const sample = sheet.rows.slice(header.checked ? 1 : 0, 5).map(row => row[i]).find(value => value !== '' && value != null);
+            return [letter, heading, sample == null ? '' : String(sample).slice(0, 65)].filter(Boolean).join(' · ');
+        }
+        function updateTagSummary() {
+            const count = tagInputs.filter(({input}) => input.checked).length;
+            tagSummary.textContent = count ? `أعمدة التاغات · ${count} محددة` : 'اختيار أعمدة التاغات';
+        }
         function fillColumns(suggest) {
             for (const field of mappingFields) {
                 const select = controls[field.key];
-                options(select, columns, field.key === 'phone' ? 'اختر عموداً' : 'تجاهل الحقل', value => {
-                    const i = Number(value);
-                    const letter = XLSX.utils.encode_col(i);
-                    const heading = header.checked ? String(sheet.rows[0]?.[i] ?? '').trim() : '';
-                    const sample = sheet.rows.slice(header.checked ? 1 : 0, 5).map(row => row[i]).find(value => value !== '' && value != null);
-                    return [letter, heading, sample == null ? '' : String(sample).slice(0, 65)].filter(Boolean).join(' · ');
-                });
+                options(select, columns, field.key === 'phone' ? 'اختر عموداً' : 'تجاهل الحقل', columnLabel);
                 if (suggest && header.checked) {
-                    const match = sheet.rows[0].findIndex(value => field.match.test(String(value).replace(/[^\p{L}\p{N}]/gu, '')));
+                    const match = sheet.rows[0].findIndex(value => field.match.test(headingKey(value)));
                     if (match >= 0) select.value = String(match);
                 }
             }
+            for (const {input, text} of tagInputs) text.textContent = columnLabel(input.value);
+        }
+        for (const column of columns) {
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.name = index + '-tags';
+            input.value = column;
+            input.checked = tagHeader.test(headingKey(sheet.rows[0]?.[Number(column)]));
+            input.addEventListener('change', updateTagSummary);
+            const label = document.createElement('label');
+            const line = document.createElement('span');
+            const text = document.createElement('span');
+            line.append(input, ' ', text);
+            label.append(line);
+            tagOptions.append(label);
+            tagInputs.push({input, text});
         }
         fillColumns(true);
+        updateTagSummary();
         header.addEventListener('change', () => fillColumns(false));
         include.addEventListener('change', () => {
             for (const [key, control] of Object.entries(controls)) {
                 if (key !== 'include') control.disabled = !include.checked;
             }
+            for (const {input} of tagInputs) input.disabled = !include.checked;
         });
-        group.append(title, fields);
+        group.append(title, fields, tagGroup);
         container.append(group);
     });
     $('mapping-form').hidden = false;
@@ -594,10 +693,12 @@ bind('mapping-form', 'submit', event => {
             if (value !== '') columns[key] = Number(value);
         }
         if (columns.phone === undefined) throw new Error('اختر عمود رقم الموبايل في ' + sheet.label);
-        if (new Set(Object.values(columns)).size !== Object.keys(columns).length) {
-            throw new Error('اختر عموداً مختلفاً لكل حقل في ' + sheet.label);
+        const tagColumns = data.getAll(index + '-tags').map(Number);
+        const used = [...Object.values(columns), ...tagColumns];
+        if (new Set(used).size !== used.length) {
+            throw new Error('كل عمود يُستخدم مرة واحدة فقط في ' + sheet.label);
         }
-        for (const row of mapTable(sheet, columns, data.has(index + '-header'), data.get(index + '-dates'))) mapped.push(row);
+        for (const row of mapTable(sheet, columns, data.has(index + '-header'), data.get(index + '-dates'), tagColumns)) mapped.push(row);
     }
     mapping = undefined;
     $('mapping-form').hidden = true;
@@ -623,7 +724,7 @@ bind('save', 'click', async () => {
         for (let i = 0; i < rows.length; i += 500) {
             const batch = rows.slice(i, i + 500);
             const result = await api('import', {rows: batch.map(row => ({...profileValues(row), name: row.name.trim(), phone: row.parsed.phone,
-                country: row.parsed.country, categories: [category], tags: []}))});
+                country: row.parsed.country, categories: [category], tags: row.tags || []}))});
             archived += result.archived || 0;
             saved += batch.length - (result.archived || 0);
             const completed = new Set(batch);

@@ -10,7 +10,7 @@ header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-uns
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VITA | أرشيف جهات الاتصال</title>
 <link rel="icon" href="assets/vita-mark.png">
-<link rel="stylesheet" href="app.css?v=5">
+<link rel="stylesheet" href="app.css?v=7">
 <header><div class="branding"><img src="assets/vita-logo.png" alt="VITA"><strong>أرشيف جهات الاتصال</strong></div><button id="logout" hidden>تسجيل الخروج</button></header>
 <main>
 <p id="notice" role="status" hidden></p>
@@ -40,14 +40,14 @@ header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-uns
 <section class="panel category-panel"><h2>جهات الاتصال حسب التصنيف</h2><div id="category-summary"></div></section>
 </section>
 <section class="panel view-panel" id="contacts-panel" hidden>
-<div class="heading"><h1>جهات الاتصال</h1><div class="actions"><button id="export">تصدير Excel</button><button id="add">إضافة سجل</button><button id="contacts-import" class="primary">استيراد بيانات</button></div></div>
+<div class="heading"><h1>جهات الاتصال</h1><div class="actions"><button id="whatsapp-check" type="button">فحص واتساب</button><button id="export">تصدير Excel</button><button id="add">إضافة سجل</button><button id="contacts-import" class="primary">استيراد بيانات</button></div></div>
 <div class="segmented" role="group" aria-label="حالة جهات الاتصال"><button id="view-active" aria-pressed="true">النشطة</button><button id="view-trash" aria-pressed="false">المحذوفات</button></div>
-<div class="fields"><label>بحث<input id="search" type="search" placeholder="الاسم أو رقم الهاتف"></label><label>الدولة<select id="country-filter"></select></label><label>التصنيف<select id="category-filter"></select></label><label>التاغ<select id="tag-filter"></select></label><label>تاريخ الميلاد<input id="dob-filter" type="date"></label><label><span><input id="dob-ignore-year" type="checkbox"> اليوم والشهر فقط</span></label></div>
+<div class="fields"><label>بحث<input id="search" type="search" placeholder="الاسم أو رقم الهاتف"></label><label>الدولة<select id="country-filter"></select></label><label>التصنيف<select id="category-filter"></select></label><label>التاغ<select id="tag-filter"></select></label><label>واتساب<select id="whatsapp-filter"><option value="">كل الحالات</option><option value="yes">عليه واتساب</option><option value="no">ما عليه واتساب</option><option value="unknown">غير مفحوص</option></select></label><label>تاريخ الميلاد<input id="dob-filter" type="date"></label><label><span><input id="dob-ignore-year" type="checkbox"> اليوم والشهر فقط</span></label></div>
 <div class="bulk-bar">
 <div class="bulk-count"><span id="count"></span><span id="selected-count" aria-live="polite"></span></div>
 <div class="actions"><button id="select-filtered">تحديد كل النتائج</button><button id="clear-selection" hidden>إلغاء التحديد</button><button id="soft-delete" class="danger-outline" disabled>نقل للمحذوفات</button><button id="restore-selected" hidden disabled>استرجاع</button><button id="permanent-delete" class="danger-outline" disabled>حذف نهائي</button></div>
 </div>
-<div class="table-wrap"><table><thead><tr><th class="selection-cell"><input type="checkbox" id="select-page" aria-label="تحديد سجلات الصفحة"></th><th>الاسم</th><th>الجنسية</th><th>الهوية الإماراتية</th><th>رقم الهاتف</th><th>البريد الإلكتروني</th><th>تاريخ الميلاد</th><th>الجنس</th><th>دولة الرقم</th><th>التصنيفات</th><th>التاغات</th><th></th></tr></thead><tbody id="contacts"></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th class="selection-cell"><input type="checkbox" id="select-page" aria-label="تحديد سجلات الصفحة"></th><th>الاسم</th><th>الجنسية</th><th>الهوية الإماراتية</th><th>رقم الهاتف</th><th>واتساب</th><th>البريد الإلكتروني</th><th>تاريخ الميلاد</th><th>الجنس</th><th>دولة الرقم</th><th>التصنيفات</th><th>التاغات</th><th></th></tr></thead><tbody id="contacts"></tbody></table></div>
 <p id="contacts-empty" class="empty-state" hidden>ما في سجلات بتطابق الفلاتر الحالية.</p>
 <nav class="actions"><button id="prev">السابق</button><span id="page"></span><button id="next">التالي</button></nav>
 </section>
@@ -61,13 +61,14 @@ header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-uns
 </form>
 <form id="mapping-form" hidden>
 <h3>مطابقة أعمدة الملفات</h3>
+<p>إذا التاغات موزّعة على عدة أعمدة، حدّدها من «أعمدة التاغات». كل خلية بتضيف تاغاً للسجل.</p>
 <div id="mapping-sheets"></div>
 <button class="primary">مطابقة الأعمدة ومعالجة السجلات</button>
 </form>
 <div id="review" hidden>
 <h3>مراجعة قبل الحفظ</h3><p id="review-count"></p>
 <div class="actions"><select id="review-filter" aria-label="حالة السجل"><option value="">الصالحة والتي تحتاج مراجعة</option><option value="valid">صالحة</option><option value="duplicate">مكررة</option><option value="invalid">الأرقام المستبعدة</option><option value="details">بيانات تحتاج تصحيح</option><option value="archived">موجودة بالمحذوفات</option></select><button id="save" class="primary">حفظ الأرقام الصالحة</button></div>
-<div class="table-wrap"><table><thead><tr><th>المصدر</th><th>الاسم</th><th>الرقم</th><th>الجنسية</th><th>الهوية الإماراتية</th><th>البريد الإلكتروني</th><th>تاريخ الميلاد</th><th>الجنس</th><th>الحالة</th><th></th></tr></thead><tbody id="review-rows"></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>المصدر</th><th>الاسم</th><th>الرقم</th><th>الجنسية</th><th>الهوية الإماراتية</th><th>البريد الإلكتروني</th><th>تاريخ الميلاد</th><th>الجنس</th><th>التاغات</th><th>الحالة</th><th></th></tr></thead><tbody id="review-rows"></tbody></table></div>
 <nav class="actions"><button id="review-prev">السابق</button><span id="review-page"></span><button id="review-next">التالي</button></nav>
 </div>
 </section>
@@ -100,5 +101,5 @@ header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-uns
 <script defer src="assets/xlsx.full.min.js"></script>
 <script defer src="assets/jszip.min.js"></script>
 <script defer src="assets/tesseract.min.js"></script>
-<script type="module" src="app.mjs?v=5"></script>
+<script type="module" src="app.mjs?v=7"></script>
 </html>

@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/whatsapp.php';
 
 ini_set('display_errors', '0');
 header('Content-Type: application/json; charset=UTF-8');
@@ -130,11 +131,11 @@ try {
     $db = new PDO(
         'mysql:host=' . $config['host'] . ';dbname=' . $config['database'] . ';charset=utf8mb4',
         $config['db_user'], $config['db_password'],
-        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => false, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
+        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => false, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::MYSQL_ATTR_FOUND_ROWS => true]
     );
     if ($action === 'list') {
         $after = max(0, (int) ($body['after'] ?? 0));
-        $stmt = $db->prepare('SELECT id,name,phone,country,nationality,emid,email,dob,gender,deleted_at FROM contacts WHERE id > ? ORDER BY id LIMIT 1000');
+        $stmt = $db->prepare('SELECT id,name,phone,country,nationality,emid,email,dob,gender,deleted_at,whatsapp_status,whatsapp_checked_at FROM contacts WHERE id > ? ORDER BY id LIMIT 1000');
         $stmt->execute([$after]);
         $rows = [];
         foreach ($stmt as $row) {
@@ -147,7 +148,43 @@ try {
                 $rows[$label['contact_id']][$label['kind'] === 'tag' ? 'tags' : 'categories'][] = $label['label'];
             }
         }
-        reply(['rows' => array_values($rows)]);
+        reply(['rows' => array_values($rows), 'whatsapp_message' => (string) ($config['whatsapp_message'] ?? '')]);
+    }
+
+    if ($action === 'whatsapp_check') {
+        $token = trim((string) ($config['whatsapp_token'] ?? ''));
+        if ($token === '' || preg_match('/\s/', $token)) {
+            reply(['error' => 'أضف whatsapp_token في ملف إعدادات VITA الخاص على الاستضافة.'], 503);
+        }
+        $ids = $body['ids'] ?? null;
+        if (!is_array($ids) || !$ids || count($ids) > 20) {
+            throw new InvalidArgumentException('اختر من سجل واحد إلى 20 سجل لكل دفعة.');
+        }
+        foreach ($ids as $id) {
+            if ((!is_int($id) && !is_string($id)) || !filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]])) {
+                throw new InvalidArgumentException('أحد معرّفات السجلات غير صالح.');
+            }
+        }
+        $ids = array_values(array_unique($ids));
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $db->prepare("SELECT id, phone FROM contacts WHERE deleted_at IS NULL AND id IN ($placeholders)");
+        $stmt->execute($ids);
+        $rows = array_values(array_filter($stmt->fetchAll(), static fn ($row) => preg_match('/^\+[1-9]\d{1,14}$/D', $row['phone'])));
+        if (!$rows) reply(['checked' => 0, 'unknown' => count($ids)]);
+        $phones = array_map(static fn ($row) => substr($row['phone'], 1), $rows);
+        $statuses = whatsappLookup($token, $phones);
+        $db->beginTransaction();
+        $update = $db->prepare('UPDATE contacts SET whatsapp_status = ?, whatsapp_checked_at = UTC_TIMESTAMP()
+            WHERE id = ? AND phone = ? AND deleted_at IS NULL');
+        $checked = 0;
+        foreach ($rows as $row) {
+            $status = $statuses[substr($row['phone'], 1)] ?? null;
+            if ($status === null) continue;
+            $update->execute([$status, $row['id'], $row['phone']]);
+            $checked += $update->rowCount();
+        }
+        $db->commit();
+        reply(['checked' => $checked, 'unknown' => count($ids) - $checked]);
     }
 
     $db->beginTransaction();
@@ -223,7 +260,12 @@ try {
         if (!$stmt->fetchColumn()) {
             reply(['error' => 'السجل غير موجود. حدّث القائمة.'], 404);
         }
-        $db->prepare('UPDATE contacts SET name=?,phone=?,country=?,nationality=?,emid=?,email=?,dob=?,gender=? WHERE id=?')->execute([...contactFields($body), $id]);
+        $fields = contactFields($body);
+        $db->prepare('UPDATE contacts SET
+            whatsapp_status=IF(phone = ?, whatsapp_status, NULL),
+            whatsapp_checked_at=IF(phone = ?, whatsapp_checked_at, NULL),
+            name=?,phone=?,country=?,nationality=?,emid=?,email=?,dob=?,gender=? WHERE id=?')
+            ->execute([$fields[1], $fields[1], ...$fields, $id]);
         $db->prepare('DELETE FROM labels WHERE contact_id=?')->execute([$id]);
         saveLabels($db, $id, $body);
     } else {

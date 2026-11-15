@@ -140,3 +140,8 @@ tbody tr:last-child td{border-bottom:0}
     .stat-card span{font-size:12px}
     .stat-card strong{font-size:21px}
 }
+
+.whatsapp-link{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#e4f8eb}
+.whatsapp-link:hover{background:#cff1dc}
+.whatsapp-link:focus-visible{outline:2px solid #11663c;outline-offset:2px}
+.whatsapp-link img{width:20px;height:20px}
