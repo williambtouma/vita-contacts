@@ -1,0 +1,12 @@
+Options -Indexes
+<FilesMatch "^(\.|config.*\.php$|vita-contacts\.private\.php$|.*\.sql(?:\.gz)?$)">
+    Require all denied
+</FilesMatch>
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule "(^|/)\." "-" [F,L]
+</IfModule>
+<IfModule mod_mime.c>
+    AddType text/javascript .mjs
+    AddType application/wasm .wasm
+</IfModule>

@@ -1,0 +1,54 @@
+:root{font-family:Tahoma,Arial,sans-serif;color:#16283a;background:#eef4f6;line-height:1.6;--teal:#086b62;--line:#d7e3e7}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0}
+header{background:#112a3a;color:#fff;padding:18px max(24px,calc((100vw - 1240px)/2));display:flex;justify-content:space-between;align-items:center;gap:16px}
+header strong{font-size:20px}header span{display:block;color:#bed2dc;font-size:13px}
+main{max-width:1288px;margin:auto;padding:24px}
+.panel,dialog{background:#fff;border:1px solid var(--line);border-radius:14px;padding:24px;margin-block-end:20px}
+.login{max-width:410px;margin:7vh auto;display:grid;gap:16px}
+h1,h2,h3{margin:0 0 8px;line-height:1.4}
+.heading,.actions,.fields{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.heading{justify-content:space-between;margin-bottom:18px}
+.fields{align-items:end;margin-block:12px}
+label{display:grid;gap:4px;font-weight:bold;font-size:14px;min-width:0}
+.fields label{flex:1 1 150px}
+button,input,select,textarea{font:inherit;border:1px solid #b9cdd4;border-radius:7px;background:#fff;padding:7px 10px;color:inherit;min-width:0}
+button{cursor:pointer;font-weight:bold}
+button:disabled{cursor:default;opacity:.45}.primary{background:var(--teal);border-color:var(--teal);color:white}
+.table-wrap{overflow:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;text-align:right;font-size:14px}
+td,th{padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f3f8f8;white-space:nowrap}
+td input,td select{max-width:230px;width:100%}
+.phone{direction:ltr;text-align:right;white-space:nowrap}
+nav{justify-content:center}
+#notice{background:#d9eeeb;padding:10px 14px;border-radius:8px;white-space:pre-wrap}
+#edit-error,.invalid{color:#9b271e}.missing,.duplicate{color:#835112}
+dialog{width:min(520px,calc(100% - 32px));max-height:90vh;margin:auto}
+dialog::backdrop{background:#112a3aaa}
+dialog label{margin:8px 0}
+#source-dialog{width:min(900px,calc(100% - 32px))}
+#source-image{max-width:100%;display:block}
+pre{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:650px){main{padding:12px}.panel{padding:14px}header{padding:12px 16px}}
+@font-face{font-family:PlexArabic;src:url(assets/ibm-plex-sans-arabic-arabic-400-normal.woff2) format('woff2');font-style:normal;font-weight:400;font-display:swap;unicode-range:U+0600-06FF,U+0750-077F,U+0870-089F,U+08A0-08FF,U+FB50-FDFF,U+FE70-FEFF}
+@font-face{font-family:PlexArabic;src:url(assets/ibm-plex-sans-arabic-latin-400-normal.woff2) format('woff2');font-style:normal;font-weight:400;font-display:swap;unicode-range:U+0000-024F,U+2000-206F}
+@font-face{font-family:PlexArabic;src:url(assets/ibm-plex-sans-arabic-arabic-600-normal.woff2) format('woff2');font-style:normal;font-weight:600;font-display:swap;unicode-range:U+0600-06FF,U+0750-077F,U+0870-089F,U+08A0-08FF,U+FB50-FDFF,U+FE70-FEFF}
+@font-face{font-family:PlexArabic;src:url(assets/ibm-plex-sans-arabic-latin-600-normal.woff2) format('woff2');font-style:normal;font-weight:600;font-display:swap;unicode-range:U+0000-024F,U+2000-206F}
+:root{font-family:PlexArabic,Arial,sans-serif;--line:#e7dff1;color:#20142b;background:#f7f4fb;color-scheme:light}
+body{min-height:100vh;background:radial-gradient(ellipse at 82% 0,#eadbfc 0,transparent 45%),#f7f4fb}
+header{background:linear-gradient(115deg,#000 12%,#210039 66%,#310054);border-bottom:2px solid #9b00ff;min-height:76px}
+.branding{display:flex;align-items:center;flex-wrap:wrap;gap:12px 20px}
+.branding img{width:116px;height:auto}
+.branding strong{font-size:17px}
+header button{background:#160225;color:white;border-color:#754793}
+.panel,dialog{border-color:var(--line);box-shadow:0 10px 34px #2400440b}
+.login{padding:34px;gap:17px}
+.login-mark{max-width:64px;max-height:56px}
+button,input,select,textarea{border-color:#d5c8e3}
+.primary{background:linear-gradient(110deg,#005abc,#6d00ba);border-color:#6300ae;color:#fff}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #0077ff;outline-offset:2px}
+th{background:#f6f0fc}
+#notice{background:#e9dcff;border-inline-start:3px solid #9b00ff}
+dialog::backdrop{background:#160727bb}

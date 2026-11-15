@@ -1,0 +1,10 @@
+config.php
+config.local.php
+vita-contacts.private.php
+.env
+.env.*
+*.sql
+*.sql.gz
+*.xlsx
+*.csv
+*.log
