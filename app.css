@@ -52,3 +52,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 th{background:#f6f0fc}
 #notice{background:#e9dcff;border-inline-start:3px solid #9b00ff}
 dialog::backdrop{background:#160727bb}
+#mapping-form{margin-block:20px}
+#mapping-sheets fieldset{border:1px solid var(--line);border-radius:8px;margin-block:12px;min-width:0}
+#review-rows input,#review-rows select{min-width:108px}
+#review-rows .phone{min-width:145px}
+.details{color:#835112}

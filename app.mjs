@@ -1,5 +1,6 @@
 import {asciiDigits, parsePhone} from './phone.mjs';
-import {extractFiles} from './import.mjs';
+import {extractFiles} from './import.mjs?v=2';
+import {mappingFields, mapTable, normalizeDOB, profileError, profileFields, profileValues} from './contact-fields.mjs';
 
 const $ = id => document.getElementById(id);
 const display = new Intl.DisplayNames(['ar'], {type: 'region'});
@@ -11,6 +12,7 @@ const pageSize = 50;
 let csrf = '';
 let contacts = [];
 let pending = [];
+let mapping;
 let category = '';
 let report = [];
 let page = 0;
@@ -94,9 +96,9 @@ function drawContacts() {
     const table = $('contacts');
     table.replaceChildren();
     for (const row of rows.slice(page * pageSize, (page + 1) * pageSize)) {
-        const tr = appendRow(table, [row.name, row.phone, countryName(row.country),
+        const tr = appendRow(table, [row.name, row.nationality, row.emid, row.phone, row.email, row.dob, row.gender, countryName(row.country),
             row.categories.join('، '), row.tags.join('، '), button('تعديل', () => openEditor(row))]);
-        tr.cells[1].className = 'phone';
+        tr.cells[3].className = 'phone';
     }
 }
 async function loadContacts() {
@@ -118,10 +120,12 @@ async function loadContacts() {
 function drawReview(renderRows = true) {
     const existing = new Set(contacts.map(r => r.phone));
     const seen = new Set(existing);
-    const counts = {valid: 0, duplicate: 0, missing: 0, invalid: 0};
+    const counts = {valid: 0, duplicate: 0, missing: 0, invalid: 0, details: 0};
     for (const row of pending) {
         row.parsed = parsePhone(row.raw, row.region);
         row.state = row.parsed.state;
+        row.detailsError = profileError(profileValues(row));
+        if (row.state === 'valid' && row.detailsError) row.state = 'details';
         if (row.state === 'valid') {
             if (seen.has(row.parsed.phone)) row.state = 'duplicate';
             seen.add(row.parsed.phone);
@@ -132,7 +136,7 @@ function drawReview(renderRows = true) {
     const rows = pending.filter(row => !selection || row.state === selection);
     const total = Math.max(1, Math.ceil(rows.length / pageSize));
     reviewPage = Math.min(reviewPage, total - 1);
-    $('review-count').textContent = `صالحة ${counts.valid} · مكررة ${counts.duplicate} · بحاجة لتحديد الدولة ${counts.missing} · غير صالحة ${counts.invalid}`;
+    $('review-count').textContent = `صالحة ${counts.valid} · مكررة ${counts.duplicate} · بحاجة لتحديد الدولة ${counts.missing} · غير صالحة ${counts.invalid} · بيانات تحتاج تصحيح ${counts.details}`;
     $('review-page').textContent = `${reviewPage + 1} / ${total}`;
     $('review-prev').disabled = reviewPage === 0;
     $('review-next').disabled = reviewPage + 1 === total;
@@ -141,8 +145,8 @@ function drawReview(renderRows = true) {
     const table = $('review-rows');
     if (!renderRows) {
         for (const tr of table.rows) {
-            tr.cells[4].textContent = rowStatus(tr.pendingRow);
-            tr.cells[4].className = tr.pendingRow.state;
+            tr.cells[9].textContent = rowStatus(tr.pendingRow);
+            tr.cells[9].className = tr.pendingRow.state;
         }
         return;
     }
@@ -172,19 +176,32 @@ function drawReview(renderRows = true) {
             row.region = country.value;
             drawReview();
         });
+        const fields = profileFields.map(({key, ar}) => {
+            const input = document.createElement('input');
+            input.value = row[key] || '';
+            input.setAttribute('aria-label', ar);
+            input.disabled = working;
+            input.addEventListener('input', () => {
+                row[key] = key === 'dob' ? normalizeDOB(input.value, 'DMY') : input.value;
+                drawReview(false);
+            });
+            if (key === 'dob') input.addEventListener('blur', () => input.value = row[key]);
+            return input;
+        });
         const status = rowStatus(row);
         const remove = button('استبعاد', () => {
             pending = pending.filter(other => other !== row);
             drawReview();
         });
         remove.disabled = working;
-        const tr = appendRow(table, [button(row.source.label, () => openSource(row.source)), name, phone, country, status, remove]);
+        const tr = appendRow(table, [button(row.source.label, () => openSource(row.source)), name, phone, ...fields, country, status, remove]);
         tr.pendingRow = row;
-        tr.cells[4].className = row.state;
+        tr.cells[2].className = 'phone';
+        tr.cells[9].className = row.state;
     }
 }
 function rowStatus(row) {
-    return row.parsed.reason || (row.state === 'duplicate' ? 'مكرر · ستُضاف التصنيفات' : 'صالح') + ' · ' + row.parsed.phone;
+    return row.parsed.reason || row.detailsError || (row.state === 'duplicate' ? 'مكرر · ستُضاف التصنيفات' : 'صالح') + ' · ' + row.parsed.phone;
 }
 function openSource(source) {
     $('source-label').textContent = source.label;
@@ -204,6 +221,7 @@ function openEditor(row) {
     form.elements.name.value = row?.name || '';
     form.elements.phone.value = row?.phone || '';
     form.elements.country.value = row?.country || '';
+    for (const {key} of profileFields) form.elements[key].value = row?.[key] || '';
     form.elements.categories.value = row?.categories.join('\n') || '';
     form.elements.tags.value = row?.tags.join('\n') || '';
     $('delete').hidden = !row;
@@ -248,9 +266,9 @@ bind('logout', 'click', async () => {
     location.reload();
 });
 bind('export', 'click', () => {
-    const rows = filtered().map(row => [row.name, row.phone, countryName(row.country), row.categories.join('، '), row.tags.join('، ')]);
-    const sheet = XLSX.utils.aoa_to_sheet([['الاسم', 'رقم الهاتف', 'الدولة', 'التصنيفات', 'التاغات'], ...rows]);
-    sheet['!cols'] = [26, 20, 24, 35, 35].map(wch => ({wch}));
+    const rows = filtered().map(row => [row.name, row.nationality, row.emid, row.phone, row.email, row.dob || '', row.gender, countryName(row.country), row.categories.join('، '), row.tags.join('، ')]);
+    const sheet = XLSX.utils.aoa_to_sheet([['Name', 'Nationality', 'EMID', 'Mobile #', 'Email', 'DOB', 'Gender', 'Phone country', 'Categories', 'Tags'], ...rows]);
+    sheet['!cols'] = [26, 20, 24, 20, 32, 15, 16, 24, 35, 35].map(wch => ({wch}));
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, 'Contacts');
     XLSX.writeFile(book, 'VITA-Contacts.xlsx');
@@ -280,8 +298,13 @@ bind('edit-form', 'submit', async event => {
         $('edit-error').textContent = 'رقم الهاتف موجود في سجل آخر.';
         return;
     }
-    const row = {name: fields.name.trim(), phone: parsed.phone, country: parsed.country,
+    const row = {...profileValues(fields), name: fields.name.trim(), phone: parsed.phone, country: parsed.country,
         categories: lines(fields.categories), tags: lines(fields.tags)};
+    const invalid = profileError(row);
+    if (invalid) {
+        $('edit-error').textContent = invalid;
+        return;
+    }
     const submit = form.querySelector('button');
     submit.disabled = true;
     try {
@@ -302,7 +325,7 @@ bind('show-import', 'click', () => {
 bind('import-form', 'submit', async event => {
     event.preventDefault();
     const form = event.currentTarget;
-    if (working || (pending.length && !confirm('استبدال نتائج المراجعة الحالية بملفات جديدة؟'))) return;
+    if (working || ((pending.length || mapping) && !confirm('استبدال نتائج المراجعة الحالية بملفات جديدة؟'))) return;
     const inputs = [...form.elements];
     const fields = new FormData(form);
     const label = fields.get('category').trim();
@@ -310,20 +333,121 @@ bind('import-form', 'submit', async event => {
     working = true;
     inputs.forEach(input => input.disabled = true);
     $('review').hidden = true;
+    $('mapping-form').hidden = true;
+    pending = [];
+    mapping = undefined;
     try {
         const result = await extractFiles(fields.getAll('files'), notice);
         category = label;
-        pending = result.rows.map(row => ({...row, name: row.name.slice(0, 200), region: fields.get('region')}));
         report = result.reports;
-        reviewPage = 0;
-        $('review-filter').value = '';
-        $('review').hidden = !pending.length;
-        notice(report.join('\n') || (pending.length ? 'انتهت القراءة. راجع السجلات قبل الحفظ.' : 'لم تُكتشف سجلات.'));
+        if (result.sheets.length) {
+            mapping = {result, region: fields.get('region')};
+            drawMapping(result.sheets);
+            notice(report.join('\n'));
+        } else {
+            startReview(result.rows, fields.get('region'));
+        }
     } finally {
         working = false;
         inputs.forEach(input => input.disabled = false);
         drawReview();
     }
+});
+function startReview(rows, region) {
+    pending = rows.map(row => ({...row, name: [...row.name].slice(0, 200).join(''), region}));
+    reviewPage = 0;
+    $('review-filter').value = '';
+    $('review').hidden = !pending.length;
+    notice(report.join('\n') || (pending.length ? 'راجع السجلات قبل الحفظ.' : 'لم تُكتشف سجلات.'));
+    drawReview();
+}
+
+function drawMapping(sheets) {
+    const container = $('mapping-sheets');
+    container.replaceChildren();
+    sheets.forEach((sheet, index) => {
+        const group = document.createElement('fieldset');
+        const title = document.createElement('legend');
+        title.textContent = sheet.label;
+        const fields = document.createElement('div');
+        fields.className = 'fields';
+        const controls = {};
+        function addControl(key, text, input) {
+            const label = document.createElement('label');
+            input.name = index + '-' + key;
+            controls[key] = input;
+            label.append(text, input);
+            fields.append(label);
+        }
+        const include = document.createElement('input');
+        include.type = 'checkbox';
+        include.checked = true;
+        addControl('include', 'استيراد هذه الورقة', include);
+        const header = document.createElement('input');
+        header.type = 'checkbox';
+        header.checked = true;
+        addControl('header', 'أول صف عناوين', header);
+        for (const field of mappingFields) {
+            addControl(field.key, field.ar, document.createElement('select'));
+        }
+        const dates = document.createElement('select');
+        options(dates, ['DMY', 'MDY'], 'اختر ترتيب التاريخ', value => value === 'DMY' ? 'DD/MM/YYYY' : 'MM/DD/YYYY');
+        dates.options[0].remove();
+        dates.value = 'DMY';
+        addControl('dates', 'ترتيب التاريخ النصّي', dates);
+        const width = sheet.rows.reduce((max, row) => Math.max(max, row.length), 0);
+        const columns = Array.from({length: width}, (_, i) => String(i));
+        function fillColumns(suggest) {
+            for (const field of mappingFields) {
+                const select = controls[field.key];
+                options(select, columns, field.key === 'phone' ? 'اختر عموداً' : 'تجاهل الحقل', value => {
+                    const i = Number(value);
+                    const letter = XLSX.utils.encode_col(i);
+                    const heading = header.checked ? String(sheet.rows[0]?.[i] ?? '').trim() : '';
+                    const sample = sheet.rows.slice(header.checked ? 1 : 0, 5).map(row => row[i]).find(value => value !== '' && value != null);
+                    return [letter, heading, sample == null ? '' : String(sample).slice(0, 65)].filter(Boolean).join(' · ');
+                });
+                if (suggest && header.checked) {
+                    const match = sheet.rows[0].findIndex(value => field.match.test(String(value).replace(/[^\p{L}\p{N}]/gu, '')));
+                    if (match >= 0) select.value = String(match);
+                }
+            }
+        }
+        fillColumns(true);
+        header.addEventListener('change', () => fillColumns(false));
+        include.addEventListener('change', () => {
+            for (const [key, control] of Object.entries(controls)) {
+                if (key !== 'include') control.disabled = !include.checked;
+            }
+        });
+        group.append(title, fields);
+        container.append(group);
+    });
+    $('mapping-form').hidden = false;
+}
+bind('mapping-form', 'submit', event => {
+    event.preventDefault();
+    if (!mapping) return;
+    const {result, region} = mapping;
+    const data = new FormData(event.currentTarget);
+    const mapped = [...result.rows];
+    for (const [index, sheet] of result.sheets.entries()) {
+        if (!data.has(index + '-include')) continue;
+        const columns = {};
+        for (const {key} of mappingFields) {
+            const value = data.get(index + '-' + key);
+            if (value !== '') columns[key] = Number(value);
+        }
+        if (columns.phone === undefined) throw new Error('اختر عمود رقم الموبايل في ' + sheet.label);
+        if (new Set(Object.values(columns)).size !== Object.keys(columns).length) {
+            throw new Error('اختر عموداً مختلفاً لكل حقل في ' + sheet.label);
+        }
+        for (const row of mapTable(sheet, columns, data.has(index + '-header'), data.get(index + '-dates'))) mapped.push(row);
+    }
+    mapping = undefined;
+    $('mapping-form').hidden = true;
+    $('mapping-sheets').replaceChildren();
+    startReview(mapped, region);
 });
 bind('remove-invalid', 'click', () => {
     pending = pending.filter(row => row.state !== 'invalid');
@@ -336,7 +460,8 @@ bind('source-dialog', 'close', () => {
 });
 bind('save', 'click', async () => {
     if (working) return;
-    const rows = pending.filter(row => row.parsed.state === 'valid');
+    drawReview(false);
+    const rows = pending.filter(row => row.state === 'valid' || row.state === 'duplicate');
     const submit = $('import-form').querySelector('button');
     working = true;
     submit.disabled = true;
@@ -345,7 +470,7 @@ bind('save', 'click', async () => {
     try {
         for (let i = 0; i < rows.length; i += 500) {
             const batch = rows.slice(i, i + 500);
-            await api('import', {rows: batch.map(row => ({name: row.name.trim(), phone: row.parsed.phone,
+            await api('import', {rows: batch.map(row => ({...profileValues(row), name: row.name.trim(), phone: row.parsed.phone,
                 country: row.parsed.country, categories: [category], tags: []}))});
             saved += batch.length;
             const completed = new Set(batch);

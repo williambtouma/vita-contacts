@@ -43,7 +43,19 @@ function contactFields(array $row): array {
         ($country !== '' && !preg_match('/^[A-Z]{2}$/D', $country))) {
         throw new InvalidArgumentException('صيغة رقم الهاتف أو الدولة غير صالحة.');
     }
-    return [$name, $phone, $country];
+    $nationality = inputText($row['nationality'] ?? '', 120);
+    $emid = inputText($row['emid'] ?? '', 32);
+    $email = inputText($row['email'] ?? '', 254);
+    $dob = inputText($row['dob'] ?? '', 10);
+    $gender = inputText($row['gender'] ?? '', 60);
+    if ($email !== '' && !preg_match('/^[^\s@]+@[^\s@]+\.[^\s@]+$/uD', $email)) {
+        throw new InvalidArgumentException('صيغة البريد الإلكتروني غير صالحة.');
+    }
+    if ($dob !== '' && (!preg_match('/^([1-9]\d{3})-(\d{2})-(\d{2})$/D', $dob, $date) ||
+        !checkdate((int) $date[2], (int) $date[3], (int) $date[1]))) {
+        throw new InvalidArgumentException('تاريخ الميلاد غير صالح.');
+    }
+    return [$name, $phone, $country, $nationality, $emid, $email, $dob === '' ? null : $dob, $gender];
 }
 
 if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS'] === 'off') {
@@ -117,7 +129,7 @@ try {
     );
     if ($action === 'list') {
         $after = max(0, (int) ($body['after'] ?? 0));
-        $stmt = $db->prepare('SELECT id,name,phone,country FROM contacts WHERE id > ? ORDER BY id LIMIT 1000');
+        $stmt = $db->prepare('SELECT id,name,phone,country,nationality,emid,email,dob,gender FROM contacts WHERE id > ? ORDER BY id LIMIT 1000');
         $stmt->execute([$after]);
         $rows = [];
         foreach ($stmt as $row) {
@@ -139,13 +151,13 @@ try {
         if (!is_array($rows) || count($rows) > 500) {
             throw new InvalidArgumentException('الحد الأقصى 500 سجل لكل دفعة.');
         }
-        $stmt = $db->prepare("INSERT INTO contacts (name,phone,country) VALUES (?,?,?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), name=IF(name='',VALUES(name),name)");
+        $stmt = $db->prepare("INSERT INTO contacts (name,phone,country,nationality,emid,email,dob,gender) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), name=IF(name='',VALUES(name),name), nationality=IF(nationality='',VALUES(nationality),nationality), emid=IF(emid='',VALUES(emid),emid), email=IF(email='',VALUES(email),email), dob=COALESCE(dob,VALUES(dob)), gender=IF(gender='',VALUES(gender),gender)");
         foreach ($rows as $row) {
             $stmt->execute(contactFields($row));
             saveLabels($db, (int) $db->lastInsertId(), $row);
         }
     } elseif ($action === 'add') {
-        $db->prepare('INSERT INTO contacts (name,phone,country) VALUES (?,?,?)')->execute(contactFields($body));
+        $db->prepare('INSERT INTO contacts (name,phone,country,nationality,emid,email,dob,gender) VALUES (?,?,?,?,?,?,?,?)')->execute(contactFields($body));
         saveLabels($db, (int) $db->lastInsertId(), $body);
     } elseif ($action === 'edit' || $action === 'delete') {
         $id = filter_var($body['id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -160,7 +172,7 @@ try {
         if ($action === 'delete') {
             $db->prepare('DELETE FROM contacts WHERE id=?')->execute([$id]);
         } else {
-            $db->prepare('UPDATE contacts SET name=?,phone=?,country=? WHERE id=?')->execute([...contactFields($body), $id]);
+            $db->prepare('UPDATE contacts SET name=?,phone=?,country=?,nationality=?,emid=?,email=?,dob=?,gender=? WHERE id=?')->execute([...contactFields($body), $id]);
             $db->prepare('DELETE FROM labels WHERE contact_id=?')->execute([$id]);
             saveLabels($db, $id, $body);
         }

@@ -1,8 +1,6 @@
 import {asciiDigits} from './phone.mjs';
 
 const phonePattern = /(?:\+|00)?\d(?:[ \t().\-–\u00a0]*\d){4,24}/g;
-const phoneHeaders = /phone|mobile|telephone|whatsapp|contact number|رقم|موبايل|هاتف|جوال|واتس/i;
-const nameHeaders = /name|customer|patient|الاسم|الإسم|اسم|المريض|العميل/i;
 const address = path => new URL('./assets/' + path, import.meta.url).href;
 
 function candidateRows(text, source) {
@@ -27,25 +25,14 @@ function tables(buffer, file, source) {
         input = new TextDecoder(encoding).decode(buffer);
     }
     const book = XLSX.read(input, {type: typeof input === 'string' ? 'string' : 'array', raw: true, cellFormula: false, dense: true});
-    return book.SheetNames.flatMap(sheet => {
-        const rows = XLSX.utils.sheet_to_json(book.Sheets[sheet], {header: 1, raw: true, defval: '', blankrows: false});
-        const phoneColumns = (rows[0] || []).flatMap((value, column) => phoneHeaders.test(value) ? [column] : []);
-        const nameColumns = (rows[0] || []).flatMap((value, column) => nameHeaders.test(value) ? [column] : []);
-        return rows.slice(phoneColumns.length ? 1 : 0).flatMap(row => {
-            const phones = phoneColumns.length ? phoneColumns : row.flatMap((value, column) =>
-                /^\+?[\d\s().\-–]+$/.test(asciiDigits(value).trim()) && (asciiDigits(value).match(/\d/g) || []).length >= 5 ? [column] : []);
-            const name = (nameColumns.length ? nameColumns.map(col => row[col]) :
-                [row.find((value, col) => !phones.includes(col) && typeof value === 'string' && /\p{L}/u.test(value))])
-                .filter(Boolean).join(' ');
-            return phones.filter(col => String(row[col] ?? '').trim()).flatMap(col => {
-                const from = {...source, label: source.label + ' / ' + sheet, text: row.join(' | ')};
-                return String(row[col]).split(/[;,/\n]+/).filter(value => value.trim()).map(raw => ({name, raw, source: from}));
-            });
-        });
-    });
+    return book.SheetNames.map(sheet => ({
+        label: source.label + ' / ' + sheet,
+        date1904: !!book.Workbook?.WBProps?.date1904,
+        rows: XLSX.utils.sheet_to_json(book.Sheets[sheet], {header: 1, raw: true, defval: '', blankrows: false})
+    })).filter(table => table.rows.length);
 }
 
-function docText(xml) {
+function docContent(xml, label) {
     const parsed = new DOMParser().parseFromString(xml, 'application/xml');
     const localName = element => element.nodeName.split(':').at(-1);
     const descendants = (element, name) => Array.from(element.getElementsByTagName('*'))
@@ -53,19 +40,27 @@ function docText(xml) {
     const children = element => Array.from(element.childNodes).filter(child => child.nodeType === 1);
     const paragraph = node => descendants(node, 't').map(t => t.textContent).join('');
     const body = descendants(parsed, 'body')[0];
-    if (!body) return '';
-    return children(body).map(element => {
+    const tables = [];
+    if (!body) return {text: '', tables};
+    const text = children(body).map(element => {
         if (localName(element) === 'p') return paragraph(element);
         if (localName(element) !== 'tbl') return descendants(element, 'p').map(paragraph).join('\n');
-        return descendants(element, 'tr').map(row => children(row).filter(cell => localName(cell) === 'tc')
-            .map(cell => descendants(cell, 'p').map(paragraph).join(' ')).join(' | ')).join('\n');
+        const rows = descendants(element, 'tr').map(row => children(row).filter(cell => localName(cell) === 'tc')
+            .map(cell => descendants(cell, 'p').map(paragraph).join(' ')));
+        if (rows.some(row => row.length > 1)) {
+            tables.push({label: label + ' / جدول ' + (tables.length + 1), rows});
+            return '';
+        }
+        return rows.flat().join('\n');
     }).join('\n');
+    return {text, tables};
 }
 
 export async function extractFiles(files, progress) {
     let worker;
     const rows = [];
     const reports = [];
+    const sheets = [];
     async function recognize(image) {
         worker ??= await Tesseract.createWorker(['ara', 'eng'], 1, {
             workerPath: address('worker.min.js'),
@@ -83,12 +78,12 @@ export async function extractFiles(files, progress) {
     try {
         for (const [index, file] of files.entries()) {
             progress(`قراءة الملف ${index + 1} من ${files.length} — ${file.name}`);
-            const previous = rows.length;
+            const previous = rows.length + sheets.length;
             const source = {label: file.name};
             try {
                 if (file.size > 50 * 1024 * 1024) throw new Error('يتجاوز الملف 50 ميغابايت');
                 if (/\.(xlsx|xls|csv|tsv)$/i.test(file.name)) {
-                    rows.push(...tables(await file.arrayBuffer(), file, source));
+                    sheets.push(...tables(await file.arrayBuffer(), file, source));
                 } else if (/\.txt$/i.test(file.name)) {
                     const text = await file.text();
                     rows.push(...candidateRows(text, {...source, text}));
@@ -98,7 +93,8 @@ export async function extractFiles(files, progress) {
                     const zip = await JSZip.loadAsync(await file.arrayBuffer());
                     const xml = await zip.file('word/document.xml')?.async('string');
                     if (!xml) throw new Error('ملف Word غير صالح');
-                    const text = docText(xml);
+                    const {text, tables} = docContent(xml, file.name);
+                    sheets.push(...tables);
                     rows.push(...candidateRows(text, {...source, text}));
                     for (const image of Object.values(zip.files).filter(entry => /^word\/media\/.*\.(png|jpe?g|webp|bmp|tiff?)$/i.test(entry.name))) {
                         try {
@@ -150,7 +146,7 @@ export async function extractFiles(files, progress) {
                 } else {
                     throw new Error('نوع الملف غير مدعوم');
                 }
-                if (rows.length === previous) reports.push(file.name + ' — لم تُكتشف سجلات');
+                if (rows.length + sheets.length === previous) reports.push(file.name + ' — لم تُكتشف سجلات');
             } catch (error) {
                 reports.push(file.name + ' — ' + (error.message || 'تعذّرت قراءة الملف'));
             }
@@ -158,5 +154,5 @@ export async function extractFiles(files, progress) {
     } finally {
         if (worker) await worker.terminate();
     }
-    return {rows, reports};
+    return {rows, reports, sheets};
 }
