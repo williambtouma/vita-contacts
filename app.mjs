@@ -1,4 +1,4 @@
-import {asciiDigits, parsePhone} from './phone.mjs';
+import {asciiDigits, parsePhone, parseUAEPhone} from './phone.mjs?v=3';
 import {extractFiles} from './import.mjs?v=2';
 import {mappingFields, mapTable, normalizeDOB, profileError, profileFields, profileValues} from './contact-fields.mjs';
 
@@ -120,9 +120,9 @@ async function loadContacts() {
 function drawReview(renderRows = true) {
     const existing = new Set(contacts.map(r => r.phone));
     const seen = new Set(existing);
-    const counts = {valid: 0, duplicate: 0, missing: 0, invalid: 0, details: 0};
+    const counts = {valid: 0, duplicate: 0, invalid: 0, details: 0};
     for (const row of pending) {
-        row.parsed = parsePhone(row.raw, row.region);
+        row.parsed = parseUAEPhone(row.raw);
         row.state = row.parsed.state;
         row.detailsError = profileError(profileValues(row));
         if (row.state === 'valid' && row.detailsError) row.state = 'details';
@@ -133,20 +133,19 @@ function drawReview(renderRows = true) {
         counts[row.state]++;
     }
     const selection = $('review-filter').value;
-    const rows = pending.filter(row => !selection || row.state === selection);
+    const rows = pending.filter(row => selection ? row.state === selection : row.state !== 'invalid');
     const total = Math.max(1, Math.ceil(rows.length / pageSize));
     reviewPage = Math.min(reviewPage, total - 1);
-    $('review-count').textContent = `صالحة ${counts.valid} · مكررة ${counts.duplicate} · بحاجة لتحديد الدولة ${counts.missing} · غير صالحة ${counts.invalid} · بيانات تحتاج تصحيح ${counts.details}`;
+    $('review-count').textContent = `صالحة ${counts.valid} · مكررة ${counts.duplicate} · مستبعدة تلقائياً ${counts.invalid} · بيانات تحتاج تصحيح ${counts.details}`;
     $('review-page').textContent = `${reviewPage + 1} / ${total}`;
     $('review-prev').disabled = reviewPage === 0;
     $('review-next').disabled = reviewPage + 1 === total;
     $('save').disabled = working || counts.valid + counts.duplicate === 0;
-    $('remove-invalid').disabled = working || counts.invalid === 0;
     const table = $('review-rows');
     if (!renderRows) {
         for (const tr of table.rows) {
-            tr.cells[9].textContent = rowStatus(tr.pendingRow);
-            tr.cells[9].className = tr.pendingRow.state;
+            tr.cells[8].textContent = rowStatus(tr.pendingRow);
+            tr.cells[8].className = tr.pendingRow.state;
         }
         return;
     }
@@ -167,15 +166,6 @@ function drawReview(renderRows = true) {
             row.raw = phone.value;
             drawReview(false);
         });
-        const country = document.createElement('select');
-        country.setAttribute('aria-label', 'دولة الرقم المحلي');
-        options(country, countries, 'اختيار الدولة', countryName);
-        country.value = row.region;
-        country.disabled = working;
-        country.addEventListener('change', () => {
-            row.region = country.value;
-            drawReview();
-        });
         const fields = profileFields.map(({key, ar}) => {
             const input = document.createElement('input');
             input.value = row[key] || '';
@@ -194,10 +184,10 @@ function drawReview(renderRows = true) {
             drawReview();
         });
         remove.disabled = working;
-        const tr = appendRow(table, [button(row.source.label, () => openSource(row.source)), name, phone, ...fields, country, status, remove]);
+        const tr = appendRow(table, [button(row.source.label, () => openSource(row.source)), name, phone, ...fields, status, remove]);
         tr.pendingRow = row;
         tr.cells[2].className = 'phone';
-        tr.cells[9].className = row.state;
+        tr.cells[8].className = row.state;
     }
 }
 function rowStatus(row) {
@@ -238,7 +228,7 @@ async function enter() {
     $('logout').hidden = false;
     await loadContacts();
 }
-for (const id of ['region', 'editor-country']) options($(id), countries, 'اختيار الدولة', countryName);
+options($('editor-country'), countries, 'اختيار الدولة', countryName);
 for (const id of ['search', 'country-filter', 'category-filter', 'tag-filter']) {
     bind(id, 'input', () => { page = 0; drawContacts(); });
 }
@@ -341,11 +331,11 @@ bind('import-form', 'submit', async event => {
         category = label;
         report = result.reports;
         if (result.sheets.length) {
-            mapping = {result, region: fields.get('region')};
+            mapping = result;
             drawMapping(result.sheets);
             notice(report.join('\n'));
         } else {
-            startReview(result.rows, fields.get('region'));
+            startReview(result.rows);
         }
     } finally {
         working = false;
@@ -353,8 +343,8 @@ bind('import-form', 'submit', async event => {
         drawReview();
     }
 });
-function startReview(rows, region) {
-    pending = rows.map(row => ({...row, name: [...row.name].slice(0, 200).join(''), region}));
+function startReview(rows) {
+    pending = rows.map(row => ({...row, name: [...row.name].slice(0, 200).join('')}));
     reviewPage = 0;
     $('review-filter').value = '';
     $('review').hidden = !pending.length;
@@ -428,7 +418,7 @@ function drawMapping(sheets) {
 bind('mapping-form', 'submit', event => {
     event.preventDefault();
     if (!mapping) return;
-    const {result, region} = mapping;
+    const result = mapping;
     const data = new FormData(event.currentTarget);
     const mapped = [...result.rows];
     for (const [index, sheet] of result.sheets.entries()) {
@@ -447,11 +437,7 @@ bind('mapping-form', 'submit', event => {
     mapping = undefined;
     $('mapping-form').hidden = true;
     $('mapping-sheets').replaceChildren();
-    startReview(mapped, region);
-});
-bind('remove-invalid', 'click', () => {
-    pending = pending.filter(row => row.state !== 'invalid');
-    drawReview();
+    startReview(mapped);
 });
 bind('source-dialog', 'close', () => {
     if (sourceUrl) URL.revokeObjectURL(sourceUrl);

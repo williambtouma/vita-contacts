@@ -33,7 +33,8 @@ header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-uns
 <h2>استيراد ملفات</h2>
 <form id="import-form">
 <div class="fields"><label>الملفات<input name="files" type="file" accept=".xlsx,.xls,.csv,.tsv,.docx,.pdf,.png,.jpeg,.jpg,.webp,.txt" multiple required></label>
-<label>تصنيف الدفعة<input name="category" maxlength="120" required></label><label>الدولة الافتراضية للأرقام المحلية<select id="region" name="region"></select></label></div>
+<label>تصنيف الدفعة<input name="category" maxlength="120" required></label></div>
+<p>الاستيراد للأرقام الإماراتية فقط. تُستبعد الأرقام غير الصالحة تلقائياً.</p>
 <button class="primary">قراءة الملفات</button>
 </form>
 <form id="mapping-form" hidden>
@@ -43,8 +44,8 @@ header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-uns
 </form>
 <div id="review" hidden>
 <h3>مراجعة قبل الحفظ</h3><p id="review-count"></p>
-<div class="actions"><select id="review-filter" aria-label="حالة السجل"><option value="">كل السجلات</option><option value="valid">صالحة</option><option value="duplicate">مكررة</option><option value="missing">الدولة غير محددة</option><option value="invalid">غير صالحة</option><option value="details">بيانات تحتاج تصحيح</option></select><button id="remove-invalid">استبعاد الأرقام غير الصالحة</button><button id="save" class="primary">حفظ الأرقام الصالحة</button></div>
-<div class="table-wrap"><table><thead><tr><th>المصدر</th><th>الاسم</th><th>الرقم</th><th>الجنسية</th><th>الهوية الإماراتية</th><th>البريد الإلكتروني</th><th>تاريخ الميلاد</th><th>الجنس</th><th>الدولة للأرقام المحلية</th><th>الحالة</th><th></th></tr></thead><tbody id="review-rows"></tbody></table></div>
+<div class="actions"><select id="review-filter" aria-label="حالة السجل"><option value="">الصالحة والتي تحتاج مراجعة</option><option value="valid">صالحة</option><option value="duplicate">مكررة</option><option value="invalid">الأرقام المستبعدة</option><option value="details">بيانات تحتاج تصحيح</option></select><button id="save" class="primary">حفظ الأرقام الصالحة</button></div>
+<div class="table-wrap"><table><thead><tr><th>المصدر</th><th>الاسم</th><th>الرقم</th><th>الجنسية</th><th>الهوية الإماراتية</th><th>البريد الإلكتروني</th><th>تاريخ الميلاد</th><th>الجنس</th><th>الحالة</th><th></th></tr></thead><tbody id="review-rows"></tbody></table></div>
 <nav class="actions"><button id="review-prev">السابق</button><span id="review-page"></span><button id="review-next">التالي</button></nav>
 </div>
 </section>
@@ -68,5 +69,5 @@ header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-uns
 <script defer src="assets/xlsx.full.min.js"></script>
 <script defer src="assets/jszip.min.js"></script>
 <script defer src="assets/tesseract.min.js"></script>
-<script type="module" src="app.mjs?v=2"></script>
+<script type="module" src="app.mjs?v=3"></script>
 </html>

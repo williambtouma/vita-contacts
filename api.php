@@ -153,7 +153,11 @@ try {
         }
         $stmt = $db->prepare("INSERT INTO contacts (name,phone,country,nationality,emid,email,dob,gender) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), name=IF(name='',VALUES(name),name), nationality=IF(nationality='',VALUES(nationality),nationality), emid=IF(emid='',VALUES(emid),emid), email=IF(email='',VALUES(email),email), dob=COALESCE(dob,VALUES(dob)), gender=IF(gender='',VALUES(gender),gender)");
         foreach ($rows as $row) {
-            $stmt->execute(contactFields($row));
+            $fields = contactFields($row);
+            if ($fields[2] !== 'AE' || !str_starts_with($fields[1], '+971')) {
+                throw new InvalidArgumentException('الاستيراد يقبل أرقام الإمارات فقط.');
+            }
+            $stmt->execute($fields);
             saveLabels($db, (int) $db->lastInsertId(), $row);
         }
     } elseif ($action === 'add') {
