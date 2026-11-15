@@ -13,6 +13,8 @@ export const mappingFields = [
     ...profileFields
 ];
 
+export const tagHeader = /^(?:tags?|labels?|التاغات|التاغ|تاغات|تاغ|الوسوم|وسوم|وسم)\p{N}*$/iu;
+
 const dubaiDate = new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Dubai'});
 
 function dateParts(year, month, day) {
@@ -56,13 +58,28 @@ export function profileError(row) {
     return long ? long.ar + ' يتجاوز الطول المسموح.' : '';
 }
 
-export function mapTable(table, columns, hasHeader, dateOrder) {
+export function parseTags(value) {
+    const tags = new Map();
+    for (const part of value) {
+        const tag = String(part ?? '').trim();
+        if (tag && !tags.has(tag.toLowerCase())) tags.set(tag.toLowerCase(), tag);
+    }
+    return [...tags.values()];
+}
+
+export function tagsError(tags) {
+    if (tags.length > 100) return 'الحد الأقصى 100 تاغ لكل سجل.';
+    return tags.some(tag => [...tag].length > 120) ? 'أحد التاغات يتجاوز 120 حرفاً.' : '';
+}
+
+export function mapTable(table, columns, hasHeader, dateOrder, tagColumns = []) {
     return table.rows.slice(hasHeader ? 1 : 0).flatMap(row => {
         const value = key => columns[key] === undefined ? '' : row[columns[key]] ?? '';
         const raw = String(value('phone')).trim();
-        if (!mappingFields.some(({key}) => String(value(key)).trim())) return [];
+        const tags = parseTags(tagColumns.map(index => row[index]));
+        if (!tags.length && !mappingFields.some(({key}) => String(value(key)).trim())) return [];
         const contact = {
-            name: String(value('name')).trim(), raw,
+            name: String(value('name')).trim(), raw, tags,
             ...Object.fromEntries(profileFields.map(({key}) => [key, String(value(key)).trim()])),
             source: {label: table.label, text: row.join(' | ')}
         };
