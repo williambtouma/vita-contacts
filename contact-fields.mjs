@@ -13,19 +13,35 @@ export const mappingFields = [
     ...profileFields
 ];
 
+const dubaiDate = new Intl.DateTimeFormat('sv-SE', {timeZone: 'Asia/Dubai'});
+
+function dateParts(year, month, day) {
+    const value = [year, month, day].map((part, index) => String(part).padStart(index ? 2 : 4, '0')).join('-');
+    return validDOB(value) ? value : '';
+}
+
+export function validDOB(value) {
+    if (!/^[1-9]\d{3}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(value + 'T00:00:00Z');
+    const today = dubaiDate.format(new Date());
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value && value <= today;
+}
+
 export function normalizeDOB(value, order = 'DMY', date1904 = false) {
     if (typeof value === 'number') {
         const date = globalThis.XLSX.SSF.parse_date_code(value, {date1904});
-        if (!date) return String(value);
-        value = [date.y, date.m, date.d].map((part, i) => String(part).padStart(i ? 2 : 4, '0')).join('-');
+        return date ? dateParts(date.y, date.m, date.d) : '';
     }
-    const raw = asciiDigits(value).trim();
-    if (!raw) return '';
-    const iso = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
-    const local = raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
-    if (!iso && !local) return raw;
-    const [, year, month, day] = iso || [null, local[3], local[order === 'MDY' ? 1 : 2], local[order === 'MDY' ? 2 : 1]];
-    return year + '-' + month.padStart(2, '0') + '-' + day.padStart(2, '0');
+    const raw = asciiDigits(value).trim().replace(/(?:T|\s+)\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s*(?:AM|PM|Z|[+-]\d{2}:?\d{2}))?$/i, '');
+    const iso = raw.match(/^(\d{4})([-/.])(\d{1,2})\2(\d{1,2})$/);
+    if (iso) return dateParts(iso[1], iso[3], iso[4]);
+    const local = raw.match(/^(\d{1,2})([-/.])(\d{1,2})\2(\d{4})$/);
+    if (!local) return '';
+    const [, first, , second, year] = local;
+    if (Number(first) > 12 || Number(second) > 12) {
+        return Number(first) > 12 ? dateParts(year, second, first) : dateParts(year, first, second);
+    }
+    return order === 'MDY' ? dateParts(year, first, second) : dateParts(year, second, first);
 }
 
 export function profileValues(row) {
@@ -34,12 +50,7 @@ export function profileValues(row) {
 
 export function profileError(row) {
     const {dob, email} = row;
-    if (dob) {
-        const date = new Date(dob + 'T00:00:00Z');
-        if (!/^[1-9]\d{3}-\d{2}-\d{2}$/.test(dob) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== dob) {
-            return 'تاريخ الميلاد غير صالح. استخدم YYYY-MM-DD.';
-        }
-    }
+    if (dob && !validDOB(dob)) return 'تاريخ الميلاد غير صالح.';
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'صيغة البريد الإلكتروني غير صالحة.';
     const long = profileFields.find(({key, max}) => [...(row[key] || '')].length > max);
     return long ? long.ar + ' يتجاوز الطول المسموح.' : '';

@@ -24,7 +24,7 @@ header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-uns
 <div id="archive" hidden>
 <section class="panel">
 <div class="heading"><h1>جهات الاتصال</h1><div class="actions"><button id="export">تصدير Excel</button><button id="add">إضافة سجل</button><button id="show-import" class="primary">استيراد ملفات</button></div></div>
-<div class="fields"><label>بحث<input id="search" type="search" placeholder="الاسم أو رقم الهاتف"></label><label>الدولة<select id="country-filter"></select></label><label>التصنيف<select id="category-filter"></select></label><label>التاغ<select id="tag-filter"></select></label></div>
+<div class="fields"><label>بحث<input id="search" type="search" placeholder="الاسم أو رقم الهاتف"></label><label>الدولة<select id="country-filter"></select></label><label>التصنيف<select id="category-filter"></select></label><label>التاغ<select id="tag-filter"></select></label><label>تاريخ الميلاد<input id="dob-filter" type="date"></label><label><span><input id="dob-ignore-year" type="checkbox"> اليوم والشهر فقط</span></label></div>
 <p id="count"></p>
 <div class="table-wrap"><table><thead><tr><th>الاسم</th><th>الجنسية</th><th>الهوية الإماراتية</th><th>رقم الهاتف</th><th>البريد الإلكتروني</th><th>تاريخ الميلاد</th><th>الجنس</th><th>دولة الرقم</th><th>التصنيفات</th><th>التاغات</th><th></th></tr></thead><tbody id="contacts"></tbody></table></div>
 <nav class="actions"><button id="prev">السابق</button><span id="page"></span><button id="next">التالي</button></nav>
@@ -69,5 +69,5 @@ header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-uns
 <script defer src="assets/xlsx.full.min.js"></script>
 <script defer src="assets/jszip.min.js"></script>
 <script defer src="assets/tesseract.min.js"></script>
-<script type="module" src="app.mjs?v=3"></script>
+<script type="module" src="app.mjs?v=4"></script>
 </html>

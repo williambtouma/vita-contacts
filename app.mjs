@@ -1,6 +1,6 @@
 import {asciiDigits, parsePhone, parseUAEPhone} from './phone.mjs?v=3';
 import {extractFiles} from './import.mjs?v=2';
-import {mappingFields, mapTable, normalizeDOB, profileError, profileFields, profileValues} from './contact-fields.mjs';
+import {mappingFields, mapTable, normalizeDOB, profileError, profileFields, profileValues} from './contact-fields.mjs?v=4';
 
 const $ = id => document.getElementById(id);
 const display = new Intl.DisplayNames(['ar'], {type: 'region'});
@@ -78,11 +78,14 @@ function distinctLabel(key) {
 function filtered() {
     const query = $('search').value.trim().toLocaleLowerCase();
     const digits = asciiDigits(query).replace(/[^\d]/g, '');
+    const dob = $('dob-filter').value;
+    const withoutYear = $('dob-ignore-year').checked;
     return contacts.filter(row => (!query || row.name.toLocaleLowerCase().includes(query) ||
         (digits && !/\p{L}/u.test(query) && row.phone.includes(digits))) &&
         (!$('country-filter').value || row.country === $('country-filter').value) &&
         (!$('category-filter').value || row.categories.includes($('category-filter').value)) &&
-        (!$('tag-filter').value || row.tags.includes($('tag-filter').value)));
+        (!$('tag-filter').value || row.tags.includes($('tag-filter').value)) &&
+        (!dob || (withoutYear ? row.dob?.slice(5) === dob.slice(5) : row.dob === dob)));
 }
 function drawContacts() {
     const rows = filtered();
@@ -124,7 +127,7 @@ function drawReview(renderRows = true) {
     for (const row of pending) {
         row.parsed = parseUAEPhone(row.raw);
         row.state = row.parsed.state;
-        row.detailsError = profileError(profileValues(row));
+        row.detailsError = profileError({...profileValues(row), dob: ''});
         if (row.state === 'valid' && row.detailsError) row.state = 'details';
         if (row.state === 'valid') {
             if (seen.has(row.parsed.phone)) row.state = 'duplicate';
@@ -229,7 +232,7 @@ async function enter() {
     await loadContacts();
 }
 options($('editor-country'), countries, 'اختيار الدولة', countryName);
-for (const id of ['search', 'country-filter', 'category-filter', 'tag-filter']) {
+for (const id of ['search', 'country-filter', 'category-filter', 'tag-filter', 'dob-filter', 'dob-ignore-year']) {
     bind(id, 'input', () => { page = 0; drawContacts(); });
 }
 bind('prev', 'click', () => { page--; drawContacts(); });

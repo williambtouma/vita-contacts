@@ -35,7 +35,7 @@ function saveLabels(PDO $db, int $id, array $row): void {
     }
 }
 
-function contactFields(array $row): array {
+function contactFields(array $row, bool $import = false): array {
     $phone = inputText($row['phone'] ?? '', 16);
     $country = inputText($row['country'] ?? '', 2);
     $name = inputText($row['name'] ?? '', 200);
@@ -46,14 +46,19 @@ function contactFields(array $row): array {
     $nationality = inputText($row['nationality'] ?? '', 120);
     $emid = inputText($row['emid'] ?? '', 32);
     $email = inputText($row['email'] ?? '', 254);
-    $dob = inputText($row['dob'] ?? '', 10);
+    $dob = $row['dob'] ?? '';
     $gender = inputText($row['gender'] ?? '', 60);
     if ($email !== '' && !preg_match('/^[^\s@]+@[^\s@]+\.[^\s@]+$/uD', $email)) {
         throw new InvalidArgumentException('صيغة البريد الإلكتروني غير صالحة.');
     }
-    if ($dob !== '' && (!preg_match('/^([1-9]\d{3})-(\d{2})-(\d{2})$/D', $dob, $date) ||
-        !checkdate((int) $date[2], (int) $date[3], (int) $date[1]))) {
-        throw new InvalidArgumentException('تاريخ الميلاد غير صالح.');
+    $today = (new DateTimeImmutable('now', new DateTimeZone('Asia/Dubai')))->format('Y-m-d');
+    if ($dob !== '' && (!is_string($dob) ||
+        !preg_match('/^([1-9]\d{3})-(\d{2})-(\d{2})$/D', $dob, $date) ||
+        !checkdate((int) $date[2], (int) $date[3], (int) $date[1]) || $dob > $today)) {
+        if (!$import) {
+            throw new InvalidArgumentException('تاريخ الميلاد غير صالح.');
+        }
+        $dob = '';
     }
     return [$name, $phone, $country, $nationality, $emid, $email, $dob === '' ? null : $dob, $gender];
 }
@@ -153,7 +158,7 @@ try {
         }
         $stmt = $db->prepare("INSERT INTO contacts (name,phone,country,nationality,emid,email,dob,gender) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), name=IF(name='',VALUES(name),name), nationality=IF(nationality='',VALUES(nationality),nationality), emid=IF(emid='',VALUES(emid),emid), email=IF(email='',VALUES(email),email), dob=COALESCE(dob,VALUES(dob)), gender=IF(gender='',VALUES(gender),gender)");
         foreach ($rows as $row) {
-            $fields = contactFields($row);
+            $fields = contactFields($row, true);
             if ($fields[2] !== 'AE' || !str_starts_with($fields[1], '+971')) {
                 throw new InvalidArgumentException('الاستيراد يقبل أرقام الإمارات فقط.');
             }
