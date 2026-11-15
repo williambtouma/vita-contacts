@@ -11,6 +11,10 @@ const countries = [...gulf, ...libphonenumber.getCountries().filter(code => !gul
 const pageSize = 50;
 let csrf = '';
 let contacts = [];
+let contactView = 'active';
+const selected = new Set();
+let bulkRequest;
+let bulkWorking = false;
 let pending = [];
 let mapping;
 let category = '';
@@ -73,14 +77,79 @@ function button(text, handler) {
     return result;
 }
 function distinctLabel(key) {
-    return [...new Set(contacts.flatMap(contact => contact[key]))].sort((a, b) => a.localeCompare(b, 'ar'));
+    return [...new Set(viewContacts().flatMap(contact => contact[key]))].sort((a, b) => a.localeCompare(b, 'ar'));
 }
+function viewContacts() {
+    return contacts.filter(row => Boolean(row.deleted_at) === (contactView === 'trash'));
+}
+
+function showView(view) {
+    for (const control of document.querySelectorAll('[data-view]')) {
+        if (control.dataset.view === view) control.setAttribute('aria-current', 'page');
+        else control.removeAttribute('aria-current');
+        $(control.dataset.view + '-panel').hidden = control.dataset.view !== view;
+    }
+}
+
+function drawDashboard() {
+    const counts = new Map();
+    let active = 0;
+    for (const row of contacts) {
+        if (row.deleted_at) continue;
+        active++;
+        for (const category of row.categories) counts.set(category, (counts.get(category) || 0) + 1);
+    }
+    $('stat-active').textContent = active.toLocaleString('ar');
+    $('stat-trash').textContent = (contacts.length - active).toLocaleString('ar');
+    $('stat-categories').textContent = counts.size.toLocaleString('ar');
+    const summary = $('category-summary');
+    summary.replaceChildren();
+    if (!counts.size) {
+        summary.textContent = 'لا توجد تصنيفات بعد.';
+        return;
+    }
+    for (const [label, count] of [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ar')).slice(0, 8)) {
+        const item = button(label, () => {
+            $('search').value = '';
+            $('dob-filter').value = '';
+            $('dob-ignore-year').checked = false;
+            switchContactView('active');
+            $('category-filter').value = label;
+            clearSelection();
+            showView('contacts');
+        });
+        const total = document.createElement('span');
+        total.textContent = count.toLocaleString('ar');
+        item.append(total);
+        summary.append(item);
+    }
+}
+
+function setContactFilters() {
+    options($('country-filter'), [...new Set(viewContacts().map(row => row.country).filter(Boolean))], 'كل الدول', countryName);
+    options($('category-filter'), distinctLabel('categories'), 'كل التصنيفات');
+    options($('tag-filter'), distinctLabel('tags'), 'كل التاغات');
+}
+
+function clearSelection() {
+    selected.clear();
+    page = 0;
+    drawContacts();
+}
+
+function switchContactView(view) {
+    contactView = view;
+    for (const id of ['country-filter', 'category-filter', 'tag-filter']) $(id).value = '';
+    setContactFilters();
+    clearSelection();
+}
+
 function filtered() {
     const query = $('search').value.trim().toLocaleLowerCase();
     const digits = asciiDigits(query).replace(/[^\d]/g, '');
     const dob = $('dob-filter').value;
     const withoutYear = $('dob-ignore-year').checked;
-    return contacts.filter(row => (!query || row.name.toLocaleLowerCase().includes(query) ||
+    return viewContacts().filter(row => (!query || row.name.toLocaleLowerCase().includes(query) ||
         (digits && !/\p{L}/u.test(query) && row.phone.includes(digits))) &&
         (!$('country-filter').value || row.country === $('country-filter').value) &&
         (!$('category-filter').value || row.categories.includes($('category-filter').value)) &&
@@ -91,18 +160,68 @@ function drawContacts() {
     const rows = filtered();
     const total = Math.max(1, Math.ceil(rows.length / pageSize));
     page = Math.min(page, total - 1);
-    $('count').textContent = `${rows.length} من ${contacts.length} سجل`;
+    const trash = contactView === 'trash';
+    const visible = rows.slice(page * pageSize, (page + 1) * pageSize);
+    $('count').textContent = `${rows.length} من ${viewContacts().length} سجل`;
     $('page').textContent = `${page + 1} / ${total}`;
     $('prev').disabled = page === 0;
     $('next').disabled = page + 1 === total;
     $('export').disabled = !rows.length;
+    $('export').hidden = trash;
+    $('add').hidden = trash;
+    $('view-active').setAttribute('aria-pressed', String(!trash));
+    $('view-trash').setAttribute('aria-pressed', String(trash));
     const table = $('contacts');
     table.replaceChildren();
-    for (const row of rows.slice(page * pageSize, (page + 1) * pageSize)) {
-        const tr = appendRow(table, [row.name, row.nationality, row.emid, row.phone, row.email, row.dob, row.gender, countryName(row.country),
-            row.categories.join('، '), row.tags.join('، '), button('تعديل', () => openEditor(row))]);
-        tr.cells[3].className = 'phone';
+    for (const row of visible) {
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'select-record';
+        checkbox.setAttribute('aria-label', 'تحديد ' + (row.name || row.phone));
+        checkbox.checked = selected.has(row.id);
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) selected.add(row.id);
+            else selected.delete(row.id);
+            updateSelection(rows, visible);
+        });
+        const tr = appendRow(table, [checkbox, row.name, row.nationality, row.emid, row.phone, row.email, row.dob, row.gender, countryName(row.country),
+            row.categories.join('، '), row.tags.join('، '), trash ? '' : button('تعديل', () => openEditor(row))]);
+        tr.cells[0].className = 'selection-cell';
+        tr.cells[4].className = 'phone';
     }
+    $('contacts-empty').hidden = rows.length !== 0;
+    updateSelection(rows, visible);
+}
+
+function updateSelection(rows, visible) {
+    const count = selected.size;
+    const pageCount = visible.filter(row => selected.has(row.id)).length;
+    const trash = contactView === 'trash';
+    $('selected-count').textContent = count ? `تم تحديد ${count} سجل` : '';
+    $('select-page').checked = visible.length > 0 && pageCount === visible.length;
+    $('select-page').indeterminate = pageCount > 0 && pageCount < visible.length;
+    $('select-page').disabled = !visible.length || bulkWorking;
+    $('select-filtered').disabled = !rows.length || count === rows.length || bulkWorking;
+    $('clear-selection').hidden = !count;
+    $('soft-delete').hidden = trash;
+    $('restore-selected').hidden = !trash;
+    for (const id of ['soft-delete', 'permanent-delete', 'restore-selected']) $(id).disabled = !count || bulkWorking;
+}
+
+function requestBulk(mode, ids = [...selected]) {
+    if (!ids.length || bulkWorking) return;
+    bulkRequest = {mode, ids, view: contactView};
+    const permanent = mode === 'permanent';
+    $('bulk-title').textContent = permanent ? 'حذف نهائي' : mode === 'restore' ? 'استرجاع السجلات' : 'نقل إلى المحذوفات';
+    $('bulk-message').textContent = permanent
+        ? `سيتم حذف ${ids.length} سجل من قاعدة البيانات نهائياً. لا يمكن استرجاعها. هل تؤكد الحذف؟`
+        : mode === 'restore' ? `استرجاع ${ids.length} سجل إلى جهات الاتصال النشطة؟`
+            : `نقل ${ids.length} سجل إلى المحذوفات؟ يمكنك استرجاعها لاحقاً.`;
+    $('bulk-confirm').textContent = permanent ? 'تأكيد الحذف النهائي' : 'تأكيد';
+    $('bulk-confirm').className = permanent ? 'danger' : 'primary';
+    $('bulk-error').textContent = '';
+    $('bulk-dialog').showModal();
+    $('bulk-cancel').focus();
 }
 async function loadContacts() {
     const rows = [];
@@ -114,20 +233,22 @@ async function loadContacts() {
         if (batch.length) after = batch.at(-1).id;
     } while (batch.length === 1000);
     contacts = rows;
-    options($('country-filter'), [...new Set(rows.map(r => r.country).filter(Boolean))], 'كل الدول', countryName);
-    options($('category-filter'), distinctLabel('categories'), 'كل التصنيفات');
-    options($('tag-filter'), distinctLabel('tags'), 'كل التاغات');
+    setContactFilters();
+    selected.clear();
+    drawDashboard();
     drawContacts();
 }
 
 function drawReview(renderRows = true) {
-    const existing = new Set(contacts.map(r => r.phone));
+    const archived = new Set(contacts.filter(row => row.deleted_at).map(row => row.phone));
+    const existing = new Set(contacts.filter(row => !row.deleted_at).map(row => row.phone));
     const seen = new Set(existing);
-    const counts = {valid: 0, duplicate: 0, invalid: 0, details: 0};
+    const counts = {valid: 0, duplicate: 0, invalid: 0, details: 0, archived: 0};
     for (const row of pending) {
         row.parsed = parseUAEPhone(row.raw);
         row.state = row.parsed.state;
         row.detailsError = profileError({...profileValues(row), dob: ''});
+        if (row.state === 'valid' && archived.has(row.parsed.phone)) row.state = 'archived';
         if (row.state === 'valid' && row.detailsError) row.state = 'details';
         if (row.state === 'valid') {
             if (seen.has(row.parsed.phone)) row.state = 'duplicate';
@@ -136,10 +257,10 @@ function drawReview(renderRows = true) {
         counts[row.state]++;
     }
     const selection = $('review-filter').value;
-    const rows = pending.filter(row => selection ? row.state === selection : row.state !== 'invalid');
+    const rows = pending.filter(row => selection ? row.state === selection : !['invalid', 'archived'].includes(row.state));
     const total = Math.max(1, Math.ceil(rows.length / pageSize));
     reviewPage = Math.min(reviewPage, total - 1);
-    $('review-count').textContent = `صالحة ${counts.valid} · مكررة ${counts.duplicate} · مستبعدة تلقائياً ${counts.invalid} · بيانات تحتاج تصحيح ${counts.details}`;
+    $('review-count').textContent = `صالحة ${counts.valid} · مكررة ${counts.duplicate} · مستبعدة تلقائياً ${counts.invalid} · موجودة بالمحذوفات ${counts.archived} · بيانات تحتاج تصحيح ${counts.details}`;
     $('review-page').textContent = `${reviewPage + 1} / ${total}`;
     $('review-prev').disabled = reviewPage === 0;
     $('review-next').disabled = reviewPage + 1 === total;
@@ -194,6 +315,7 @@ function drawReview(renderRows = true) {
     }
 }
 function rowStatus(row) {
+    if (row.state === 'archived') return 'الرقم موجود في المحذوفات. يمكن استرجاعه من جهات الاتصال.';
     return row.parsed.reason || row.detailsError || (row.state === 'duplicate' ? 'مكرر · ستُضاف التصنيفات' : 'صالح') + ' · ' + row.parsed.phone;
 }
 function openSource(source) {
@@ -233,7 +355,7 @@ async function enter() {
 }
 options($('editor-country'), countries, 'اختيار الدولة', countryName);
 for (const id of ['search', 'country-filter', 'category-filter', 'tag-filter', 'dob-filter', 'dob-ignore-year']) {
-    bind(id, 'input', () => { page = 0; drawContacts(); });
+    bind(id, 'input', clearSelection);
 }
 bind('prev', 'click', () => { page--; drawContacts(); });
 bind('next', 'click', () => { page++; drawContacts(); });
@@ -268,14 +390,58 @@ bind('export', 'click', () => {
 });
 bind('add', 'click', () => openEditor());
 bind('close-editor', 'click', () => $('editor').close());
-bind('delete', 'click', async () => {
-    if (!editing || !confirm('حذف هذا السجل من الأرشيف؟')) return;
+for (const control of document.querySelectorAll('[data-view]')) {
+    control.addEventListener('click', () => showView(control.dataset.view));
+}
+bind('contacts-import', 'click', () => showView('import'));
+bind('view-active', 'click', () => switchContactView('active'));
+bind('view-trash', 'click', () => switchContactView('trash'));
+bind('select-page', 'change', event => {
+    for (const row of filtered().slice(page * pageSize, (page + 1) * pageSize)) {
+        if (event.currentTarget.checked) selected.add(row.id);
+        else selected.delete(row.id);
+    }
+    drawContacts();
+});
+bind('select-filtered', 'click', () => {
+    for (const row of filtered()) selected.add(row.id);
+    drawContacts();
+});
+bind('clear-selection', 'click', clearSelection);
+bind('soft-delete', 'click', () => requestBulk('soft'));
+bind('restore-selected', 'click', () => requestBulk('restore'));
+bind('permanent-delete', 'click', () => requestBulk('permanent'));
+bind('delete', 'click', () => {
+    if (!editing) return;
+    $('editor').close();
+    requestBulk('soft', [editing.id]);
+});
+bind('bulk-cancel', 'click', () => $('bulk-dialog').close());
+bind('bulk-dialog', 'cancel', event => {
+    if (bulkWorking) event.preventDefault();
+});
+bind('bulk-form', 'submit', async event => {
+    event.preventDefault();
+    if (bulkWorking || !bulkRequest) return;
+    bulkWorking = true;
+    $('bulk-confirm').disabled = true;
+    $('bulk-cancel').disabled = true;
+    $('bulk-error').textContent = '';
     try {
-        await api('delete', {id: editing.id});
-        $('editor').close();
+        const result = await api('bulk', bulkRequest);
+        $('bulk-dialog').close();
+        const action = bulkRequest.mode === 'restore' ? 'استرجاع' : bulkRequest.mode === 'soft' ? 'نقل إلى المحذوفات' : 'حذف نهائي';
+        notice(`تم تنفيذ ${action} على ${result.affected} سجل.`);
         await loadContacts();
+        if (pending.length) drawReview();
     } catch (error) {
-        $('edit-error').textContent = error.message;
+        if ($('bulk-dialog').open) $('bulk-error').textContent = error.message;
+        else notice(error.message);
+    } finally {
+        bulkWorking = false;
+        $('bulk-confirm').disabled = false;
+        $('bulk-cancel').disabled = false;
+        drawContacts();
     }
 });
 bind('edit-form', 'submit', async event => {
@@ -310,10 +476,6 @@ bind('edit-form', 'submit', async event => {
     } finally {
         submit.disabled = false;
     }
-});
-bind('show-import', 'click', () => {
-    $('import-panel').hidden = !$('import-panel').hidden;
-    if (!$('import-panel').hidden) $('import-panel').scrollIntoView({behavior: 'smooth'});
 });
 bind('import-form', 'submit', async event => {
     event.preventDefault();
@@ -456,16 +618,18 @@ bind('save', 'click', async () => {
     submit.disabled = true;
     drawReview();
     let saved = 0;
+    let archived = 0;
     try {
         for (let i = 0; i < rows.length; i += 500) {
             const batch = rows.slice(i, i + 500);
-            await api('import', {rows: batch.map(row => ({...profileValues(row), name: row.name.trim(), phone: row.parsed.phone,
+            const result = await api('import', {rows: batch.map(row => ({...profileValues(row), name: row.name.trim(), phone: row.parsed.phone,
                 country: row.parsed.country, categories: [category], tags: []}))});
-            saved += batch.length;
+            archived += result.archived || 0;
+            saved += batch.length - (result.archived || 0);
             const completed = new Set(batch);
             pending = pending.filter(row => !completed.has(row));
         }
-        notice([`تمت معالجة ${saved} سجل صالح، بما فيها الأرقام المكررة.`, ...report].join('\n'));
+        notice([`تمت معالجة ${saved} سجل صالح، بما فيها الأرقام المكررة.`, ...(archived ? [`تم تجاوز ${archived} سجلاً موجوداً في المحذوفات.`] : []), ...report].join('\n'));
     } catch (error) {
         notice(`تمت معالجة ${saved} سجل قبل توقف الحفظ. ${error.message}`);
     } finally {

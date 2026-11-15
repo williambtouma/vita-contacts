@@ -134,7 +134,7 @@ try {
     );
     if ($action === 'list') {
         $after = max(0, (int) ($body['after'] ?? 0));
-        $stmt = $db->prepare('SELECT id,name,phone,country,nationality,emid,email,dob,gender FROM contacts WHERE id > ? ORDER BY id LIMIT 1000');
+        $stmt = $db->prepare('SELECT id,name,phone,country,nationality,emid,email,dob,gender,deleted_at FROM contacts WHERE id > ? ORDER BY id LIMIT 1000');
         $stmt->execute([$after]);
         $rows = [];
         foreach ($stmt as $row) {
@@ -151,40 +151,81 @@ try {
     }
 
     $db->beginTransaction();
-    if ($action === 'import') {
+    if ($action === 'bulk') {
+        $ids = $body['ids'] ?? [];
+        $mode = $body['mode'] ?? '';
+        $view = $body['view'] ?? '';
+        if (!is_array($ids) || !$ids || !in_array($mode, ['soft', 'permanent', 'restore'], true) ||
+            !in_array($view, ['active', 'trash'], true) || ($mode === 'soft' && $view !== 'active') ||
+            ($mode === 'restore' && $view !== 'trash')) {
+            throw new InvalidArgumentException('طلب حذف أو استرجاع غير صالح.');
+        }
+        $ids = array_map(static fn ($id) => is_int($id) || is_string($id)
+            ? filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) : false, $ids);
+        if (in_array(false, $ids, true)) {
+            throw new InvalidArgumentException('أحد معرّفات السجلات غير صالح.');
+        }
+        $ids = array_values(array_unique($ids));
+        sort($ids, SORT_NUMERIC);
+        $operation = match ($mode) {
+            'soft' => 'UPDATE contacts SET deleted_at = UTC_TIMESTAMP()',
+            'restore' => 'UPDATE contacts SET deleted_at = NULL',
+            'permanent' => 'DELETE FROM contacts',
+        };
+        $scope = $view === 'active' ? 'deleted_at IS NULL' : 'deleted_at IS NOT NULL';
+        $changed = 0;
+        foreach (array_chunk($ids, 500) as $batch) {
+            $placeholders = implode(',', array_fill(0, count($batch), '?'));
+            $stmt = $db->prepare("$operation WHERE $scope AND id IN ($placeholders)");
+            $stmt->execute($batch);
+            $changed += $stmt->rowCount();
+        }
+        if ($changed !== count($ids)) {
+            $db->rollBack();
+            reply(['error' => 'تغيّرت بعض السجلات. حدّث القائمة وأعد التحديد.'], 409);
+        }
+        $db->commit();
+        reply(['ok' => true, 'affected' => $changed]);
+    } elseif ($action === 'import') {
         $rows = $body['rows'] ?? [];
         if (!is_array($rows) || count($rows) > 500) {
             throw new InvalidArgumentException('الحد الأقصى 500 سجل لكل دفعة.');
         }
-        $stmt = $db->prepare("INSERT INTO contacts (name,phone,country,nationality,emid,email,dob,gender) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), name=IF(name='',VALUES(name),name), nationality=IF(nationality='',VALUES(nationality),nationality), emid=IF(emid='',VALUES(emid),emid), email=IF(email='',VALUES(email),email), dob=COALESCE(dob,VALUES(dob)), gender=IF(gender='',VALUES(gender),gender)");
+        $stmt = $db->prepare("INSERT INTO contacts (name,phone,country,nationality,emid,email,dob,gender) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), name=IF(deleted_at IS NULL AND name='',VALUES(name),name), nationality=IF(deleted_at IS NULL AND nationality='',VALUES(nationality),nationality), emid=IF(deleted_at IS NULL AND emid='',VALUES(emid),emid), email=IF(deleted_at IS NULL AND email='',VALUES(email),email), dob=IF(deleted_at IS NULL,COALESCE(dob,VALUES(dob)),dob), gender=IF(deleted_at IS NULL AND gender='',VALUES(gender),gender)");
+        $status = $db->prepare('SELECT deleted_at FROM contacts WHERE id = ?');
+        $archived = 0;
         foreach ($rows as $row) {
             $fields = contactFields($row, true);
             if ($fields[2] !== 'AE' || !str_starts_with($fields[1], '+971')) {
                 throw new InvalidArgumentException('الاستيراد يقبل أرقام الإمارات فقط.');
             }
             $stmt->execute($fields);
-            saveLabels($db, (int) $db->lastInsertId(), $row);
+            $id = (int) $db->lastInsertId();
+            $status->execute([$id]);
+            if ($status->fetchColumn() !== null) {
+                $archived++;
+                continue;
+            }
+            saveLabels($db, $id, $row);
         }
+        $db->commit();
+        reply(['ok' => true, 'archived' => $archived]);
     } elseif ($action === 'add') {
         $db->prepare('INSERT INTO contacts (name,phone,country,nationality,emid,email,dob,gender) VALUES (?,?,?,?,?,?,?,?)')->execute(contactFields($body));
         saveLabels($db, (int) $db->lastInsertId(), $body);
-    } elseif ($action === 'edit' || $action === 'delete') {
+    } elseif ($action === 'edit') {
         $id = filter_var($body['id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($id === false) {
             throw new InvalidArgumentException('السجل غير صالح.');
         }
-        $stmt = $db->prepare('SELECT id FROM contacts WHERE id=? FOR UPDATE');
+        $stmt = $db->prepare('SELECT id FROM contacts WHERE id=? AND deleted_at IS NULL FOR UPDATE');
         $stmt->execute([$id]);
         if (!$stmt->fetchColumn()) {
             reply(['error' => 'السجل غير موجود. حدّث القائمة.'], 404);
         }
-        if ($action === 'delete') {
-            $db->prepare('DELETE FROM contacts WHERE id=?')->execute([$id]);
-        } else {
-            $db->prepare('UPDATE contacts SET name=?,phone=?,country=?,nationality=?,emid=?,email=?,dob=?,gender=? WHERE id=?')->execute([...contactFields($body), $id]);
-            $db->prepare('DELETE FROM labels WHERE contact_id=?')->execute([$id]);
-            saveLabels($db, $id, $body);
-        }
+        $db->prepare('UPDATE contacts SET name=?,phone=?,country=?,nationality=?,emid=?,email=?,dob=?,gender=? WHERE id=?')->execute([...contactFields($body), $id]);
+        $db->prepare('DELETE FROM labels WHERE contact_id=?')->execute([$id]);
+        saveLabels($db, $id, $body);
     } else {
         reply(['error' => 'الطلب غير معروف.'], 404);
     }
